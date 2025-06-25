@@ -1,0 +1,13 @@
+# Core AI/ML packages
+dspy==2.6.19
+google-generativeai==0.8.5
+litellm==1.49.2
+
+# Financial data
+yfinance==0.2.63
+
+# OpenAI API (required by DSPy and financial analysis)
+openai>=1.0.0
+
+# Environment variable management (optional for local development)
+python-dotenv>=1.0.0
