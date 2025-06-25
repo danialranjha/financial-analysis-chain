@@ -1,11 +1,12 @@
 # Financial Analysis Chain
 
-A DSPy-powered financial analysis tool that generates comprehensive investment reports for publicly traded companies using AI-driven analysis.
+A DSPy-powered financial analysis tool that generates comprehensive investment reports for publicly traded companies using real-time financial data and AI-driven analysis.
 
 ## Features
 
+- **Real-Time Financial Data**: Fetches live stock prices, financial statements, ratios, and analyst recommendations using yfinance
 - **14-Step Analysis Pipeline**: Comprehensive financial analysis including company overview, industry analysis, financial metrics, SWOT analysis, valuation, and investment recommendations
-- **AI-Powered Insights**: Uses OpenAI GPT-4o-mini for analysis and synthesis tasks
+- **AI-Powered Insights**: Uses OpenAI GPT-4o-mini for analysis and synthesis tasks with real financial data as context
 - **Markdown Reports**: Generates professional, structured reports saved to `reports/` directory
 - **Simple CLI**: Just provide a stock ticker symbol to get started
 
@@ -21,7 +22,7 @@ A DSPy-powered financial analysis tool that generates comprehensive investment r
 
 3. **Install dependencies:**
    ```bash
-   pip install dspy openai google-generativeai python-dotenv
+   pip install dspy openai google-generativeai python-dotenv yfinance
    ```
 
 4. **Set up API keys:**
@@ -80,6 +81,40 @@ The tool includes built-in mappings for major companies:
 
 For other tickers, the system will attempt analysis using the ticker symbol.
 
+## Real-Time Financial Data
+
+The tool automatically fetches current financial data for each analysis, including:
+
+### Market Data
+- Current stock price and market capitalization
+- 52-week high/low prices
+- 1-year price performance
+- Daily trading volume and beta
+
+### Financial Metrics
+- P/E ratio (trailing and forward)
+- Price-to-book ratio
+- Debt-to-equity ratio
+- Profit margins and growth rates
+- Dividend yield
+
+### Analyst Information
+- Consensus recommendation (buy/hold/sell)
+- Analyst target price
+- Number of analysts covering the stock
+
+### Financial Statements
+- Recent revenue and net income
+- Total assets and debt levels
+- Cash flow information
+
+### Company Information
+- Business summary and description
+- Industry and sector classification
+- Key business metrics
+
+This real-time data is integrated into every step of the analysis to provide current, accurate insights rather than relying solely on AI training data.
+
 ## Report Structure
 
 Each generated report includes:
@@ -107,16 +142,17 @@ reports/
 ## Example Output
 
 ```bash
-$ python financial_analysis_chain.py TSLA
-Generating financial analysis for Tesla Inc. (TSLA) in Automotive sector...
+$ python financial_analysis_chain.py AAPL
+Generating financial analysis for Apple Inc. (AAPL) in Technology sector...
+📊 Fetching real-time financial data for AAPL...
 
-✅ Analysis complete! Report saved to: reports/TSLA_20250624_185032_analysis.md
+✅ Analysis complete! Report saved to: reports/AAPL_20250624_231459_analysis.md
 
 === Executive Summary ===
-Tesla Inc. presents a compelling investment opportunity due to its strong brand 
-and growth potential in the electric vehicle market. While the company faces 
-significant risks from competition and production challenges, its innovative 
-technology and commitment to R&D support a positive long-term outlook...
+Given Apple's strong brand loyalty, solid financial health, and the potential for growth 
+in emerging technologies, the stock is currently undervalued at $200.3 compared to the 
+analyst target price of $228.85. With a consensus recommendation to buy from 40 analysts, 
+the investment outlook is positive despite some risks...
 ```
 
 ## Requirements
@@ -128,9 +164,11 @@ technology and commitment to R&D support a positive long-term outlook...
 
 ## Notes
 
+- **Real-time data**: Analysis uses current financial data fetched from Yahoo Finance via yfinance
+- **Data accuracy**: Financial data is pulled from reliable sources but may have slight delays
 - Reports are excluded from version control (added to `.gitignore`)
-- Each analysis typically takes 1-2 minutes depending on API response times
-- The tool uses AI models, so results may vary between runs
+- Each analysis typically takes 1-2 minutes depending on API response times and data fetching
+- The tool uses AI models with real financial data, so results may vary between runs
 - Generated reports are for informational purposes only and should not be considered as financial advice
 
 ## Troubleshooting

@@ -12,6 +12,9 @@ import os
 import sys
 import argparse
 from datetime import datetime
+import yfinance as yf
+import pandas as pd
+from typing import Dict, Any, Optional
 
 # Load environment variables from .env if available (for local development)
 try:
@@ -65,6 +68,175 @@ def get_gemini_lm():
     import dspy
     # Use a supported Gemini model format
     return dspy.LM("gemini/gemini-1.5-pro", api_key=GEMINI_API_KEY)
+
+
+# --- Financial Data Fetching Functions ---
+def fetch_stock_data(ticker: str) -> Dict[str, Any]:
+    """Fetch comprehensive stock data using yfinance."""
+    try:
+        stock = yf.Ticker(ticker)
+        
+        # Get basic info
+        info = stock.info
+        
+        # Get financial statements
+        financials = stock.financials
+        balance_sheet = stock.balance_sheet
+        cash_flow = stock.cashflow
+        
+        # Get historical data (1 year)
+        hist = stock.history(period="1y")
+        
+        # Get recent price data
+        current_price = info.get('currentPrice', info.get('regularMarketPrice', 'N/A'))
+        
+        # Calculate basic metrics
+        price_change_1y = ((current_price - hist['Close'].iloc[0]) / hist['Close'].iloc[0] * 100) if len(hist) > 0 and current_price != 'N/A' else 'N/A'
+        
+        data = {
+            'ticker': ticker.upper(),
+            'company_name': info.get('longName', ticker.upper()),
+            'sector': info.get('sector', 'Unknown'),
+            'industry': info.get('industry', 'Unknown'),
+            'current_price': current_price,
+            'market_cap': info.get('marketCap', 'N/A'),
+            'pe_ratio': info.get('trailingPE', 'N/A'),
+            'forward_pe': info.get('forwardPE', 'N/A'),
+            'price_to_book': info.get('priceToBook', 'N/A'),
+            'debt_to_equity': info.get('debtToEquity', 'N/A'),
+            'dividend_yield': info.get('dividendYield', 'N/A'),
+            'profit_margin': info.get('profitMargins', 'N/A'),
+            'revenue_growth': info.get('revenueGrowth', 'N/A'),
+            'earnings_growth': info.get('earningsGrowth', 'N/A'),
+            'price_change_1y': price_change_1y,
+            '52_week_high': info.get('fiftyTwoWeekHigh', 'N/A'),
+            '52_week_low': info.get('fiftyTwoWeekLow', 'N/A'),
+            'avg_volume': info.get('averageVolume', 'N/A'),
+            'beta': info.get('beta', 'N/A'),
+            'recommendation': info.get('recommendationKey', 'N/A'),
+            'target_price': info.get('targetMeanPrice', 'N/A'),
+            'analyst_count': info.get('numberOfAnalystOpinions', 'N/A'),
+            'business_summary': info.get('businessSummary', 'N/A'),
+            'financials': financials,
+            'balance_sheet': balance_sheet,
+            'cash_flow': cash_flow,
+            'historical_data': hist
+        }
+        
+        return data
+        
+    except Exception as e:
+        print(f"Warning: Could not fetch data for {ticker}: {e}")
+        return {
+            'ticker': ticker.upper(),
+            'company_name': f"{ticker.upper()} Corporation",
+            'sector': 'Unknown',
+            'industry': 'Unknown',
+            'error': str(e)
+        }
+
+def format_financial_data(data: Dict[str, Any]) -> str:
+    """Format financial data for inclusion in DSPy prompts."""
+    if 'error' in data:
+        return f"Limited data available for {data['ticker']} due to: {data['error']}"
+    
+    # Format basic metrics
+    formatted = f"""
+FINANCIAL DATA FOR {data['ticker']} ({data['company_name']}):
+
+BASIC INFORMATION:
+- Sector: {data['sector']}
+- Industry: {data['industry']}
+- Current Price: ${data['current_price']} 
+- Market Cap: {format_large_number(data['market_cap'])}
+- 52-Week Range: ${data['52_week_low']} - ${data['52_week_high']}
+- 1-Year Price Change: {format_percentage(data['price_change_1y'])}
+
+VALUATION METRICS:
+- P/E Ratio: {data['pe_ratio']}
+- Forward P/E: {data['forward_pe']}
+- Price-to-Book: {data['price_to_book']}
+- Beta: {data['beta']}
+
+FINANCIAL HEALTH:
+- Debt-to-Equity: {data['debt_to_equity']}
+- Profit Margin: {format_percentage(data['profit_margin'])}
+- Revenue Growth: {format_percentage(data['revenue_growth'])}
+- Earnings Growth: {format_percentage(data['earnings_growth'])}
+- Dividend Yield: {format_percentage(data['dividend_yield'])}
+
+ANALYST DATA:
+- Recommendation: {data['recommendation']}
+- Target Price: ${data['target_price']}
+- Number of Analysts: {data['analyst_count']}
+
+BUSINESS SUMMARY:
+{data['business_summary'][:500] + '...' if data['business_summary'] and len(str(data['business_summary'])) > 500 else data['business_summary']}
+"""
+    
+    return formatted.strip()
+
+def format_large_number(value) -> str:
+    """Format large numbers in billions/millions."""
+    if value == 'N/A' or value is None:
+        return 'N/A'
+    try:
+        num = float(value)
+        if num >= 1e12:
+            return f"${num/1e12:.2f}T"
+        elif num >= 1e9:
+            return f"${num/1e9:.2f}B"
+        elif num >= 1e6:
+            return f"${num/1e6:.2f}M"
+        else:
+            return f"${num:,.0f}"
+    except:
+        return str(value)
+
+def format_percentage(value) -> str:
+    """Format percentage values."""
+    if value == 'N/A' or value is None:
+        return 'N/A'
+    try:
+        return f"{float(value)*100:.2f}%"
+    except:
+        return str(value)
+
+def get_recent_financial_statements(data: Dict[str, Any]) -> str:
+    """Extract and format recent financial statement data."""
+    if 'error' in data:
+        return "Financial statements not available."
+    
+    try:
+        financials = data.get('financials')
+        balance_sheet = data.get('balance_sheet')
+        
+        if financials is not None and not financials.empty:
+            # Get most recent year data
+            recent_col = financials.columns[0]
+            revenue = financials.loc['Total Revenue', recent_col] if 'Total Revenue' in financials.index else 'N/A'
+            net_income = financials.loc['Net Income', recent_col] if 'Net Income' in financials.index else 'N/A'
+            
+            statement_data = f"""
+RECENT FINANCIAL STATEMENTS (Most Recent Year):
+- Total Revenue: {format_large_number(revenue)}
+- Net Income: {format_large_number(net_income)}
+"""
+            
+            if balance_sheet is not None and not balance_sheet.empty:
+                recent_bs_col = balance_sheet.columns[0]
+                total_assets = balance_sheet.loc['Total Assets', recent_bs_col] if 'Total Assets' in balance_sheet.index else 'N/A'
+                total_debt = balance_sheet.loc['Total Debt', recent_bs_col] if 'Total Debt' in balance_sheet.index else 'N/A'
+                
+                statement_data += f"- Total Assets: {format_large_number(total_assets)}\n"
+                statement_data += f"- Total Debt: {format_large_number(total_debt)}\n"
+            
+            return statement_data.strip()
+        
+    except Exception as e:
+        return f"Error processing financial statements: {e}"
+    
+    return "Financial statements not available."
 
 
 # --- Financial Analysis Prompt Chain Implementation ---
@@ -152,20 +324,36 @@ try:
 
         def forward(self, TICKER, COMPANY, SECTOR):
             """
-            Run the full 14-step financial analysis chain.
+            Run the full 14-step financial analysis chain with real financial data.
             Returns a dict with all intermediate and final outputs.
             """
+            print(f"📊 Fetching real-time financial data for {TICKER}...")
+            
+            # Fetch real financial data first
+            stock_data = fetch_stock_data(TICKER)
+            financial_data_str = format_financial_data(stock_data)
+            financial_statements_str = get_recent_financial_statements(stock_data)
+            
+            # Use real company data if available
+            if 'error' not in stock_data:
+                COMPANY = stock_data.get('company_name', COMPANY)
+                SECTOR = stock_data.get('sector', SECTOR)
+            
             context = {
                 "TICKER": TICKER,
                 "COMPANY": COMPANY,
-                "SECTOR": SECTOR
+                "SECTOR": SECTOR,
+                "real_financial_data": stock_data,
+                "financial_data_summary": financial_data_str
             }
 
-            # 1. Company Overview
-            # Instantiate Predict module inside the method
-            company_overview_predict = dspy.Predict("question: str -> answer: str")
-            company_overview_result = company_overview_predict(question=f"Provide a brief overview of {COMPANY} ({TICKER}) in the {SECTOR} sector.")
-            company_overview = getattr(company_overview_result, "answer", company_overview_result)
+            # 1. Company Overview with real data
+            company_overview_predict = dspy.Predict("financial_data, company_info -> company_overview")
+            company_overview_result = company_overview_predict(
+                financial_data=financial_data_str,
+                company_info=f"Provide a comprehensive overview of {COMPANY} ({TICKER}) based on the real financial data provided."
+            )
+            company_overview = getattr(company_overview_result, "company_overview", company_overview_result)
             context["company_overview"] = company_overview
 
             # 2. Industry/Sector Overview
@@ -176,16 +364,24 @@ try:
             competitors = self.competitor_search(TICKER=TICKER, COMPANY=COMPANY, SECTOR=SECTOR).competitors
             context["competitors"] = competitors
 
-            # 4. Financial Statement Summary
-            financial_summary = self.financial_summary(TICKER=TICKER, COMPANY=COMPANY).financial_summary
+            # 4. Financial Statement Summary with real data
+            financial_summary = self.financial_summary(
+                TICKER=TICKER, 
+                COMPANY=f"{COMPANY} with real financial data: {financial_statements_str}"
+            ).financial_summary
             context["financial_summary"] = financial_summary
 
-            # 5. Ratio Analysis
-            ratio_analysis = self.ratio_analysis(financial_summary=financial_summary).ratio_analysis
+            # 5. Ratio Analysis with real metrics
+            ratio_analysis = self.ratio_analysis(
+                financial_summary=f"Real financial metrics for {TICKER}: {financial_data_str}\n\nDetailed analysis: {financial_summary}"
+            ).ratio_analysis
             context["ratio_analysis"] = ratio_analysis
 
-            # 6. Trend Analysis
-            trend_analysis = self.trend_analysis(financial_summary=financial_summary).trend_analysis
+            # 6. Trend Analysis with historical data
+            price_performance = f"1-Year Price Change: {stock_data.get('price_change_1y', 'N/A')}, Current: ${stock_data.get('current_price', 'N/A')}, 52W Range: ${stock_data.get('52_week_low', 'N/A')}-${stock_data.get('52_week_high', 'N/A')}"
+            trend_analysis = self.trend_analysis(
+                financial_summary=f"Real performance data: {price_performance}\n\nFinancial trends: {financial_summary}"
+            ).trend_analysis
             context["trend_analysis"] = trend_analysis
 
             # 7. SWOT Analysis
@@ -202,20 +398,25 @@ try:
             management_governance = self.management_governance(TICKER=TICKER, COMPANY=COMPANY).management_governance
             context["management_governance"] = management_governance
 
-            # 9. Analyst Opinions
-            analyst_opinions = self.analyst_opinions(TICKER=TICKER, COMPANY=COMPANY).analyst_opinions
+            # 9. Analyst Opinions with real analyst data
+            real_analyst_data = f"Real analyst data: Recommendation: {stock_data.get('recommendation', 'N/A')}, Target Price: ${stock_data.get('target_price', 'N/A')}, Analyst Count: {stock_data.get('analyst_count', 'N/A')}"
+            analyst_opinions = self.analyst_opinions(
+                TICKER=TICKER, 
+                COMPANY=f"{COMPANY} - {real_analyst_data}"
+            ).analyst_opinions
             context["analyst_opinions"] = analyst_opinions
 
             # 10. ESG Factors
             esg_factors = self.esg_factors(TICKER=TICKER, COMPANY=COMPANY).esg_factors
             context["esg_factors"] = esg_factors
 
-            # 11. Valuation
+            # 11. Valuation with real metrics
+            real_valuation_metrics = f"Current valuation metrics: P/E: {stock_data.get('pe_ratio', 'N/A')}, Forward P/E: {stock_data.get('forward_pe', 'N/A')}, P/B: {stock_data.get('price_to_book', 'N/A')}, Current Price: ${stock_data.get('current_price', 'N/A')}"
             valuation = self.valuation(
                 financial_summary=financial_summary,
-                ratio_analysis=ratio_analysis,
+                ratio_analysis=f"{ratio_analysis}\n\nReal valuation data: {real_valuation_metrics}",
                 trend_analysis=trend_analysis,
-                analyst_opinions=analyst_opinions
+                analyst_opinions=f"{analyst_opinions}\n\nReal analyst target: ${stock_data.get('target_price', 'N/A')}"
             ).valuation
             context["valuation"] = valuation
 
