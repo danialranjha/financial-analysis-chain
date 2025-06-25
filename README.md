@@ -22,7 +22,7 @@ A DSPy-powered financial analysis tool that generates comprehensive investment r
 
 3. **Install dependencies:**
    ```bash
-   pip install dspy openai google-generativeai python-dotenv yfinance
+   pip install -r requirements.txt
    ```
 
 4. **Set up API keys:**
