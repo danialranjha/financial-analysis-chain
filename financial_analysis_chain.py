@@ -15,6 +15,7 @@ from datetime import datetime
 import yfinance as yf
 import pandas as pd
 from typing import Dict, Any, Optional
+import requests
 
 # Load environment variables from .env if available (for local development)
 try:
@@ -31,6 +32,49 @@ if not OPENAI_API_KEY:
     raise EnvironmentError("OPENAI_API_KEY not set in environment variables.")
 if not GEMINI_API_KEY:
     raise EnvironmentError("GEMINI_API_KEY not set in environment variables.")
+
+# --- Perplexity API Key ---
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
+if not PERPLEXITY_API_KEY:
+    raise EnvironmentError("PERPLEXITY_API_KEY not set in environment variables.")
+
+PERPLEXITY_API_URL = "https://api.perplexity.ai/chat/completions"
+
+def fetch_perplexity(query: str, section: str) -> str:
+    """
+    Query Perplexity API for a given section using the latest Perplexity API.
+    Always uses model: sonar-pro.
+    """
+    headers = {
+        "Authorization": f"Bearer {PERPLEXITY_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    # Always use the "sonar-pro" model as per latest requirements
+    model_id = "sonar-pro"
+    data = {
+        "model": model_id,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "You are a financial analysis assistant. Answer with detailed, data-driven insights and cite sources where possible."
+                )
+            },
+            {
+                "role": "user",
+                "content": query
+            }
+        ],
+        "max_tokens": 1024,
+        "temperature": 0.2
+    }
+    try:
+        resp = requests.post(PERPLEXITY_API_URL, headers=headers, json=data, timeout=30)
+        resp.raise_for_status()
+        result = resp.json()
+        return result["choices"][0]["message"]["content"].strip()
+    except Exception:
+        return f"Could not fetch {section} from Perplexity. Please try again later."
 
 # --- Initialize OpenAI Client (latest SDK, June 2025) ---
 try:
@@ -243,12 +287,61 @@ RECENT FINANCIAL STATEMENTS (Most Recent Year):
 try:
     import dspy
 
+    import time
     class FinancialAnalysisChain(dspy.Module):
         """
         DSPy module for a 14-step financial analysis prompt chain with dynamic model selection.
         Each step is a method/submodule, using Gemini for retrieval, OpenAI for analysis, or hybrid for both.
         Context (TICKER, COMPANY, SECTOR, etc.) is passed between steps.
+
+        Refactored July 2025: CLI step-by-step progress output for all 14 steps.
         """
+
+        STEP_PROGRESS = [
+            ("Company Overview", "OpenAI/Gemini"),
+            ("Industry Analysis", "Perplexity"),
+            ("Competitor Identification", "OpenAI/Gemini"),
+            ("Financial Statement Summary", "yfinance + OpenAI/Gemini"),
+            ("Ratio Analysis", "yfinance + OpenAI/Gemini"),
+            ("Trend Analysis", "Perplexity"),
+            ("SWOT Analysis", "OpenAI/Gemini"),
+            ("Management & Governance", "OpenAI/Gemini"),
+            ("Analyst Opinions", "Perplexity"),
+            ("ESG Factors", "Perplexity"),
+            ("Valuation", "OpenAI/Gemini"),
+            ("Investment Risks", "OpenAI/Gemini"),
+            ("Investment Thesis", "OpenAI/Gemini"),
+            ("Summary & Recommendation", "OpenAI/Gemini"),
+        ]
+
+        def _print_progress(self, progress_states):
+            """
+            Prints the checklist progress to the CLI.
+            progress_states: list of ("pending"|"done") for each step.
+            """
+            # Move cursor up to overwrite previous progress if not first print
+            if hasattr(self, "_last_progress_lines"):
+                sys.stdout.write(f"\033[{self._last_progress_lines}A")
+            lines = []
+            for idx, (desc, api) in enumerate(self.STEP_PROGRESS):
+                state = progress_states[idx]
+                if state == "done":
+                    icon = "✅"
+                else:
+                    icon = "⏳"
+                lines.append(f"{icon} {desc} ({api})")
+            output = "\n".join(lines)
+            print(output)
+            sys.stdout.flush()
+            self._last_progress_lines = len(lines)
+
+        def _init_progress(self):
+            self._progress_states = ["pending"] * len(self.STEP_PROGRESS)
+            self._print_progress(self._progress_states)
+
+        def _mark_step_done(self, step_idx):
+            self._progress_states[step_idx] = "done"
+            self._print_progress(self._progress_states)
 
         def __init__(self):
             super().__init__()
@@ -328,17 +421,20 @@ try:
             Returns a dict with all intermediate and final outputs.
             """
             print(f"📊 Fetching real-time financial data for {TICKER}...")
-            
-            # Fetch real financial data first
+
+            # Initialize progress checklist
+            self._init_progress()
+
+            # Fetch real financial data first (not a checklist step)
             stock_data = fetch_stock_data(TICKER)
             financial_data_str = format_financial_data(stock_data)
             financial_statements_str = get_recent_financial_statements(stock_data)
-            
+
             # Use real company data if available
             if 'error' not in stock_data:
                 COMPANY = stock_data.get('company_name', COMPANY)
                 SECTOR = stock_data.get('sector', SECTOR)
-            
+
             context = {
                 "TICKER": TICKER,
                 "COMPANY": COMPANY,
@@ -347,7 +443,9 @@ try:
                 "financial_data_summary": financial_data_str
             }
 
-            # 1. Company Overview with real data
+            # 1. Company Overview (OpenAI/Gemini)
+            step_idx = 0
+            self._print_progress(self._progress_states)
             company_overview_predict = dspy.Predict("financial_data, company_info -> company_overview")
             company_overview_result = company_overview_predict(
                 financial_data=financial_data_str,
@@ -355,36 +453,53 @@ try:
             )
             company_overview = getattr(company_overview_result, "company_overview", company_overview_result)
             context["company_overview"] = company_overview
+            self._mark_step_done(step_idx)
 
-            # 2. Industry/Sector Overview
-            industry_overview = self.industry_overview(SECTOR=SECTOR).industry_overview
+            # 2. Industry Analysis (Perplexity)
+            step_idx = 1
+            industry_query = f"Industry and sector overview for {COMPANY} ({TICKER}) in the {SECTOR} sector. Include recent trends and market context."
+            self._print_progress(self._progress_states)
+            industry_overview = fetch_perplexity(industry_query, "industry overview")
             context["industry_overview"] = industry_overview
+            self._mark_step_done(step_idx)
 
-            # 3. Competitor Identification
+            # 3. Competitor Identification (OpenAI/Gemini)
+            step_idx = 2
+            self._print_progress(self._progress_states)
             competitors = self.competitor_search(TICKER=TICKER, COMPANY=COMPANY, SECTOR=SECTOR).competitors
             context["competitors"] = competitors
+            self._mark_step_done(step_idx)
 
-            # 4. Financial Statement Summary with real data
+            # 4. Financial Statement Summary (yfinance + OpenAI/Gemini)
+            step_idx = 3
+            self._print_progress(self._progress_states)
             financial_summary = self.financial_summary(
-                TICKER=TICKER, 
+                TICKER=TICKER,
                 COMPANY=f"{COMPANY} with real financial data: {financial_statements_str}"
             ).financial_summary
             context["financial_summary"] = financial_summary
+            self._mark_step_done(step_idx)
 
-            # 5. Ratio Analysis with real metrics
+            # 5. Ratio Analysis (yfinance + OpenAI/Gemini)
+            step_idx = 4
+            self._print_progress(self._progress_states)
             ratio_analysis = self.ratio_analysis(
                 financial_summary=f"Real financial metrics for {TICKER}: {financial_data_str}\n\nDetailed analysis: {financial_summary}"
             ).ratio_analysis
             context["ratio_analysis"] = ratio_analysis
+            self._mark_step_done(step_idx)
 
-            # 6. Trend Analysis with historical data
-            price_performance = f"1-Year Price Change: {stock_data.get('price_change_1y', 'N/A')}, Current: ${stock_data.get('current_price', 'N/A')}, 52W Range: ${stock_data.get('52_week_low', 'N/A')}-${stock_data.get('52_week_high', 'N/A')}"
-            trend_analysis = self.trend_analysis(
-                financial_summary=f"Real performance data: {price_performance}\n\nFinancial trends: {financial_summary}"
-            ).trend_analysis
+            # 6. Trend Analysis (Perplexity)
+            step_idx = 5
+            self._print_progress(self._progress_states)
+            trend_query = f"Recent price and financial trends for {COMPANY} ({TICKER}) in the {SECTOR} sector. 1-Year Price Change: {stock_data.get('price_change_1y', 'N/A')}, Current: ${stock_data.get('current_price', 'N/A')}, 52W Range: ${stock_data.get('52_week_low', 'N/A')}-${stock_data.get('52_week_high', 'N/A')}."
+            trend_analysis = fetch_perplexity(trend_query, "trend analysis")
             context["trend_analysis"] = trend_analysis
+            self._mark_step_done(step_idx)
 
-            # 7. SWOT Analysis
+            # 7. SWOT Analysis (OpenAI/Gemini)
+            step_idx = 6
+            self._print_progress(self._progress_states)
             swot = self.swot_analysis(
                 company_overview=company_overview,
                 industry_overview=industry_overview,
@@ -393,24 +508,34 @@ try:
                 trend_analysis=trend_analysis
             ).swot
             context["swot"] = swot
+            self._mark_step_done(step_idx)
 
-            # 8. Management & Governance
+            # 8. Management & Governance (OpenAI/Gemini)
+            step_idx = 7
+            self._print_progress(self._progress_states)
             management_governance = self.management_governance(TICKER=TICKER, COMPANY=COMPANY).management_governance
             context["management_governance"] = management_governance
+            self._mark_step_done(step_idx)
 
-            # 9. Analyst Opinions with real analyst data
-            real_analyst_data = f"Real analyst data: Recommendation: {stock_data.get('recommendation', 'N/A')}, Target Price: ${stock_data.get('target_price', 'N/A')}, Analyst Count: {stock_data.get('analyst_count', 'N/A')}"
-            analyst_opinions = self.analyst_opinions(
-                TICKER=TICKER, 
-                COMPANY=f"{COMPANY} - {real_analyst_data}"
-            ).analyst_opinions
+            # 9. Analyst Opinions (Perplexity)
+            step_idx = 8
+            self._print_progress(self._progress_states)
+            analyst_query = f"Summarize the latest analyst opinions, price targets, and recommendations for {COMPANY} ({TICKER}) in the {SECTOR} sector."
+            analyst_opinions = fetch_perplexity(analyst_query, "analyst opinions")
             context["analyst_opinions"] = analyst_opinions
+            self._mark_step_done(step_idx)
 
-            # 10. ESG Factors
-            esg_factors = self.esg_factors(TICKER=TICKER, COMPANY=COMPANY).esg_factors
+            # 10. ESG Factors (Perplexity)
+            step_idx = 9
+            self._print_progress(self._progress_states)
+            esg_query = f"Summarize the latest ESG (Environmental, Social, Governance) factors and news for {COMPANY} ({TICKER})."
+            esg_factors = fetch_perplexity(esg_query, "ESG factors")
             context["esg_factors"] = esg_factors
+            self._mark_step_done(step_idx)
 
-            # 11. Valuation with real metrics
+            # 11. Valuation (OpenAI/Gemini)
+            step_idx = 10
+            self._print_progress(self._progress_states)
             real_valuation_metrics = f"Current valuation metrics: P/E: {stock_data.get('pe_ratio', 'N/A')}, Forward P/E: {stock_data.get('forward_pe', 'N/A')}, P/B: {stock_data.get('price_to_book', 'N/A')}, Current Price: ${stock_data.get('current_price', 'N/A')}"
             valuation = self.valuation(
                 financial_summary=financial_summary,
@@ -419,27 +544,40 @@ try:
                 analyst_opinions=f"{analyst_opinions}\n\nReal analyst target: ${stock_data.get('target_price', 'N/A')}"
             ).valuation
             context["valuation"] = valuation
+            self._mark_step_done(step_idx)
 
-            # 12. Investment Risks (Hybrid)
+            # 12. Investment Risks (OpenAI/Gemini)
+            step_idx = 11
+            self._print_progress(self._progress_states)
             risk_factors_raw = self.risk_retrieval(TICKER=TICKER, COMPANY=COMPANY).risk_factors_raw
             investment_risks = self.risk_synthesis(risk_factors_raw=risk_factors_raw, swot=swot).investment_risks
             context["investment_risks"] = investment_risks
+            self._mark_step_done(step_idx)
 
-            # 13. Investment Thesis
+            # 13. Investment Thesis (OpenAI/Gemini)
+            step_idx = 12
+            self._print_progress(self._progress_states)
             thesis = self.investment_thesis(
                 swot=swot,
                 valuation=valuation,
                 investment_risks=investment_risks
             ).thesis
             context["thesis"] = thesis
+            self._mark_step_done(step_idx)
 
-            # 14. Summary & Recommendation
+            # 14. Summary & Recommendation (OpenAI/Gemini)
+            step_idx = 13
+            self._print_progress(self._progress_states)
             summary_recommendation = self.summary_recommendation(
                 thesis=thesis,
                 valuation=valuation,
                 analyst_opinions=analyst_opinions
             ).summary_recommendation
             context["summary_recommendation"] = summary_recommendation
+            self._mark_step_done(step_idx)
+
+            # Print summary
+            print("\n🎉 All 14 analysis steps complete!\n")
 
             return context
 

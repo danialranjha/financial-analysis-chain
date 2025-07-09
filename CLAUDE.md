@@ -126,3 +126,46 @@ Report filename format: `{TICKER}_{YYYYMMDD_HHMMSS}_analysis.md`
 - **API key errors**: Ensure both OPENAI_API_KEY and GEMINI_API_KEY are set
 - **DSPy import errors**: Install with `pip install dspy`
 - **Model configuration issues**: Check LM initialization in `get_*_lm()` functions
+## Perplexity API Integration
+
+This project supports integration with the Perplexity API for advanced financial analysis queries.
+
+**API Endpoint:**  
+`https://api.perplexity.ai/chat/completions`
+
+**Recommended Model:**  
+`sonar-pro`
+
+**Required Headers:**
+- `Authorization: Bearer $PERPLEXITY_API_KEY`
+- `Content-Type: application/json`
+
+**Example Request Payload:**
+```json
+{
+  "model": "sonar-pro",
+  "messages": [
+    {
+      "role": "system",
+      "content": "You are a financial analysis assistant. Answer with detailed, data-driven insights and cite sources where possible."
+    },
+    {
+      "role": "user",
+      "content": "Provide a detailed financial analysis of Apple Inc. (AAPL) for Q2 2025, including revenue, profit, and market outlook."
+    }
+  ]
+}
+```
+
+**Environment Variable:**  
+The `PERPLEXITY_API_KEY` environment variable must be set with a valid API key to authenticate requests.
+
+> **Note:** This project uses [`python-dotenv`](https://pypi.org/project/python-dotenv/) to load environment variables from a `.env` file during local development. Set your `PERPLEXITY_API_KEY` in `.env` (see `.env.template` for an example).
+
+**Error Handling Best Practices:**
+- If the API call fails for any reason, return a user-friendly message such as:  
+  `"Could not fetch [section] from Perplexity. Please try again later."`
+- Never expose raw exception details, HTTP errors, or stack traces to the user or in reports.
+
+**Implementation Summary:**  
+The codebase handles Perplexity API integration by constructing requests with the required headers and payload, using the model specified above. For local development, environment variables (including `PERPLEXITY_API_KEY`) are loaded using `python-dotenv`. All API errors are caught and reported with a generic, user-friendly message, ensuring no sensitive error details are exposed to end users.
